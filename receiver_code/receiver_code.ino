@@ -3,6 +3,35 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
+// TODO: WIRING!!
+//                 ┌──────────────────────┐
+//                 │      Power Board     │
+//                 │   5V out    GND out  │
+//                 └────┬───────────┬─────┘
+//                      │           │
+//       ┌──────────────┼           ┼──────────────┐
+//       │              │           │              │
+//       ▼              ▼           ▼              ▼
+// ESP32 VIN       L298N 5V    L298N GND      ESP32 GND
+//                 L298N 12V
+//                      │
+//           ┌──────────┴──────────┐
+//           │       L298N         │
+//           │  IN1 ◄──── GPIO25   │
+//           │  IN2 ◄──── GPIO26   │
+//           │  IN3 ◄──── GPIO27   │
+//           │  IN4 ◄──── GPIO14   │
+//           │  ENA ◄──── GPIO32   │
+//           │  ENB ◄──── GPIO33   │
+//           │                     │
+//           │  OUT1 ──► Motor A + │
+//           │  OUT2 ──► Motor A - │
+//           │  OUT3 ──► Motor B + │
+//           │  OUT4 ──► Motor B - │
+//           └─────────────────────┘
+// TODO END
+
+
 const int ledPin = 2;  // GPIO2 for built-in LED
 
 // Structure to receive data (must match transmitter)
