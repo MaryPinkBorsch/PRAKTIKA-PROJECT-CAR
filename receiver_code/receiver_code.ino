@@ -29,6 +29,78 @@
 //           │  OUT3 ──► Motor B + │
 //           │  OUT4 ──► Motor B - │
 //           └─────────────────────┘
+
+// Motor A
+// #define IN1 25
+// #define IN2 26
+// #define ENA 32
+
+// // Motor B
+// #define IN3 27
+// #define IN4 14
+// #define ENB 33
+
+// // PWM config
+// #define PWM_FREQ    1000
+// #define PWM_RES     8       // 8-bit = 0-255
+// #define PWM_CH_A    0
+// #define PWM_CH_B    1
+
+// void setup() {
+//   pinMode(IN1, OUTPUT);
+//   pinMode(IN2, OUTPUT);
+//   pinMode(IN3, OUTPUT);
+//   pinMode(IN4, OUTPUT);
+
+//   ledcSetup(PWM_CH_A, PWM_FREQ, PWM_RES);
+//   ledcSetup(PWM_CH_B, PWM_FREQ, PWM_RES);
+//   ledcAttachPin(ENA, PWM_CH_A);
+//   ledcAttachPin(ENB, PWM_CH_B);
+// }
+
+// void motorA(int speed) {
+//   if (speed > 0) {
+//     digitalWrite(IN1, HIGH);
+//     digitalWrite(IN2, LOW);
+//   } else if (speed < 0) {
+//     digitalWrite(IN1, LOW);
+//     digitalWrite(IN2, HIGH);
+//     speed = -speed;
+//   } else {
+//     digitalWrite(IN1, LOW);
+//     digitalWrite(IN2, LOW);
+//   }
+//   ledcWrite(PWM_CH_A, speed);
+// }
+
+// void motorB(int speed) {
+//   if (speed > 0) {
+//     digitalWrite(IN3, HIGH);
+//     digitalWrite(IN4, LOW);
+//   } else if (speed < 0) {
+//     digitalWrite(IN3, LOW);
+//     digitalWrite(IN4, HIGH);
+//     speed = -speed;
+//   } else {
+//     digitalWrite(IN3, LOW);
+//     digitalWrite(IN4, LOW);
+//   }
+//   ledcWrite(PWM_CH_B, speed);
+// }
+
+// void loop() {
+//   motorA(200);   // forward
+//   motorB(200);
+//   delay(2000);
+
+//   motorA(-200);  // reverse
+//   motorB(-200);
+//   delay(2000);
+
+//   motorA(0);     // stop
+//   motorB(0);
+//   delay(1000);
+// }
 // TODO END
 
 
@@ -122,6 +194,8 @@ void printTask(void *pvParameters) {
       } else if (receivedData.yValue > 3000) {
         Serial.println("⬆️  Moving UP");
       }
+
+      // TODO: MOVE WHEELS 
 
       Serial.println("=================================");
       Serial.println();
