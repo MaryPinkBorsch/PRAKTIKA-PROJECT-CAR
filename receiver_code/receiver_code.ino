@@ -3,111 +3,31 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-// TODO: WIRING!!
-//                 ┌──────────────────────┐
-//                 │      Power Board     │
-//                 │   5V out    GND out  │
-//                 └────┬───────────┬─────┘
-//                      │           │
-//       ┌──────────────┼           ┼──────────────┐
-//       │              │           │              │
-//       ▼              ▼           ▼              ▼
-// ESP32 VIN       L298N 5V    L298N GND      ESP32 GND
-//                 L298N 12V
-//                      │
-//           ┌──────────┴──────────┐
-//           │       L298N         │
-//           │  IN1 ◄──── GPIO25   │
-//           │  IN2 ◄──── GPIO26   │
-//           │  IN3 ◄──── GPIO27   │
-//           │  IN4 ◄──── GPIO14   │
-//           │  ENA ◄──── GPIO32   │
-//           │  ENB ◄──── GPIO33   │
-//           │                     │
-//           │  OUT1 ──► Motor A + │
-//           │  OUT2 ──► Motor A - │
-//           │  OUT3 ──► Motor B + │
-//           │  OUT4 ──► Motor B - │
-//           └─────────────────────┘
+// receiver4
 
-// Motor A
-// #define IN1 25
-// #define IN2 26
-// #define ENA 32
+// Левый мотор
+#define IN1 25
+#define IN2 26
+#define ENA 15 // Пин ШИМ для левого мотора
 
-// // Motor B
-// #define IN3 27
-// #define IN4 14
-// #define ENB 33
+// Правый мотор
+#define IN3 27
+#define IN4 14
+#define ENB 12 // Пин ШИМ для правого мотора
 
-// // PWM config
-// #define PWM_FREQ    1000
-// #define PWM_RES     8       // 8-bit = 0-255
-// #define PWM_CH_A    0
-// #define PWM_CH_B    1
+// Настройки ШИМ для нового ядра ESP32 (3.x.x)
+#define PWM_FREQ 5000 // Частота ШИМ (5 кГц)
+#define PWM_RES 8     // Разрешение ШИМ (8 бит: от 0 до 255)
 
-// void setup() {
-//   pinMode(IN1, OUTPUT);
-//   pinMode(IN2, OUTPUT);
-//   pinMode(IN3, OUTPUT);
-//   pinMode(IN4, OUTPUT);
+// В новом ядре ESP32 каналы (CH_LEFT/CH_RIGHT) больше не нужны,
+// система распределяет их автоматически.
 
-//   ledcSetup(PWM_CH_A, PWM_FREQ, PWM_RES);
-//   ledcSetup(PWM_CH_B, PWM_FREQ, PWM_RES);
-//   ledcAttachPin(ENA, PWM_CH_A);
-//   ledcAttachPin(ENB, PWM_CH_B);
-// }
+const int ledPin = 2;
+volatile unsigned long lastcommandTime = 0;
+const unsigned long TIMEOUT_MS = 500;
 
-// void motorA(int speed) {
-//   if (speed > 0) {
-//     digitalWrite(IN1, HIGH);
-//     digitalWrite(IN2, LOW);
-//   } else if (speed < 0) {
-//     digitalWrite(IN1, LOW);
-//     digitalWrite(IN2, HIGH);
-//     speed = -speed;
-//   } else {
-//     digitalWrite(IN1, LOW);
-//     digitalWrite(IN2, LOW);
-//   }
-//   ledcWrite(PWM_CH_A, speed);
-// }
-
-// void motorB(int speed) {
-//   if (speed > 0) {
-//     digitalWrite(IN3, HIGH);
-//     digitalWrite(IN4, LOW);
-//   } else if (speed < 0) {
-//     digitalWrite(IN3, LOW);
-//     digitalWrite(IN4, HIGH);
-//     speed = -speed;
-//   } else {
-//     digitalWrite(IN3, LOW);
-//     digitalWrite(IN4, LOW);
-//   }
-//   ledcWrite(PWM_CH_B, speed);
-// }
-
-// void loop() {
-//   motorA(200);   // forward
-//   motorB(200);
-//   delay(2000);
-
-//   motorA(-200);  // reverse
-//   motorB(-200);
-//   delay(2000);
-
-//   motorA(0);     // stop
-//   motorB(0);
-//   delay(1000);
-// }
-// TODO END
-
-
-const int ledPin = 2;  // GPIO2 for built-in LED
-
-// Structure to receive data (must match transmitter)
-typedef struct {
+typedef struct
+{
   int xValue;
   int yValue;
   int buttonState;
@@ -115,156 +35,257 @@ typedef struct {
 } JoystickData;
 
 JoystickData receivedData;
-bool newDataAvailable = false;
+volatile bool newDataAvailable = false;
 
-// FreeRTOS handles
 TaskHandle_t receiveTaskHandle = NULL;
 TaskHandle_t printTaskHandle = NULL;
-
-// Queue for thread-safe communication
 QueueHandle_t dataQueue;
 
-// ESP-NOW receive callback
-//typedef void (*esp_now_recv_cb_t)(const esp_now_recv_info_t * esp_now_info, const uint8_t *data, int data_len);
-void OnDataRecv(const esp_now_recv_info_t *esp_now_info, const uint8_t *incomingData, int len) {
-  if (len == sizeof(JoystickData)) {
+void OnDataRecv(const esp_now_recv_info_t *esp_now_info, const uint8_t *incomingData, int len)
+{
+  if (len == sizeof(JoystickData))
+  {
     JoystickData tempData;
     memcpy(&tempData, incomingData, sizeof(tempData));
-
-    // Send to queue (non-blocking from ISR)
     xQueueSendFromISR(dataQueue, &tempData, NULL);
-
-    // // Print sender MAC
-    // Serial.print("📡 Received from: ");
-    // for(int i = 0; i < 6; i++) {
-    //   Serial.printf("%02X", mac[i]);
-    //   if(i < 5) Serial.print(":");
-    // }
-    Serial.print("Received bytes: ");
-    Serial.println(len);
   }
 }
 
-// A4:F0:0F:69:7F:5C for TRANSMITTOR mac adress
-// F4:2D:C9:59:8D:AC for RECEIVER 
-
-// Task to receive data from queue
-void receiveTask(void *pvParameters) {
+void receiveTask(void *pvParameters)
+{
   JoystickData tempData;
-
-  while (1) {
-    if (xQueueReceive(dataQueue, &tempData, portMAX_DELAY) == pdTRUE) {
+  while (1)
+  {
+    if (xQueueReceive(dataQueue, &tempData, portMAX_DELAY) == pdTRUE)
+    {
+      portDISABLE_INTERRUPTS();
       receivedData = tempData;
       newDataAvailable = true;
-
-      // Notify print task
+      portENABLE_INTERRUPTS();
       xTaskNotifyGive(printTaskHandle);
     }
   }
 }
 
-// Task to print received data
-void printTask(void *pvParameters) {
-  while (1) {
-    // Wait for notification from receive task
+// Изменяем скорость через новую функцию ledcWrite, которая теперь принимает ПИН напрямую
+void setMotorSpeed(int speedLeft, int speedRight)
+{
+  // Статические переменные хранят реальную скорость моторов между вызовами функции
+  static float currentLeft = 0.0;
+  static float currentRight = 0.0;
+
+  // КОЭФФИЦИЕНТ ПЛАВНОСТИ:
+  // 1.0 — мгновенно (как было), 0.1 — плавно, 0.02 — ОЧЕНЬ медленный разгон.
+  const float STEP = 0.2;
+
+  // Ограничиваем входные значения от греха подальше
+  speedLeft = constrain(speedLeft, 0, 255);
+  speedRight = constrain(speedRight, 0, 255);
+
+  // Плавно подтягиваем текущую скорость к целевой
+  currentLeft += ((float)speedLeft - currentLeft) * STEP;
+  currentRight += ((float)speedRight - currentRight) * STEP;
+
+  // Если разница микроскопическая, приравниваем, чтобы мотор не пищал на месте
+  if (abs(currentLeft - speedLeft) < 1.0)
+    currentLeft = speedLeft;
+  if (abs(currentRight - speedRight) < 1.0)
+    currentRight = speedRight;
+
+  // Отправляем сглаженное значение на пины ESP32
+  ledcWrite(ENA, (int)currentLeft);
+  ledcWrite(ENB, (int)currentRight);
+}
+
+void GoForward(int speed)
+{
+  digitalWrite(IN1, HIGH);
+  digitalWrite(IN2, LOW);
+  digitalWrite(IN3, HIGH);
+  digitalWrite(IN4, LOW);
+  setMotorSpeed(speed, speed);
+  Serial.print("FORWARD - SPEED: ");
+  Serial.println(speed);
+}
+
+void GoBack(int speed)
+{
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, HIGH);
+  digitalWrite(IN3, LOW);
+  digitalWrite(IN4, HIGH);
+  setMotorSpeed(speed, speed);
+  Serial.print("BACKWARD - SPEED: ");
+  Serial.println(speed);
+}
+
+void GoLeft(int speed)
+{
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, HIGH);
+  digitalWrite(IN3, HIGH);
+  digitalWrite(IN4, LOW);
+  setMotorSpeed(speed, speed);
+  Serial.print("LEFT TURN - SPEED: ");
+  Serial.println(speed);
+}
+
+void GoRight(int speed)
+{
+  digitalWrite(IN1, HIGH);
+  digitalWrite(IN2, LOW);
+  digitalWrite(IN3, LOW);
+  digitalWrite(IN4, HIGH);
+  setMotorSpeed(speed, speed);
+  Serial.print("RIGHT TURN - SPEED: ");
+  Serial.println(speed);
+}
+
+void Stop()
+{
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, LOW);
+  digitalWrite(IN3, LOW);
+  digitalWrite(IN4, LOW);
+  setMotorSpeed(0, 0);
+  Serial.println("STOP");
+}
+
+void controlFromJoystick(JoystickData data)
+{
+  int x = data.xValue;
+  int y = data.yValue;
+
+  const int DEADZONE = 250;
+  const int CENTER = 2048;
+
+  bool xCentered = (x > CENTER - DEADZONE && x < CENTER + DEADZONE);
+  bool yCentered = (y > CENTER - DEADZONE && y < CENTER + DEADZONE);
+
+  if (data.buttonState == LOW)
+  {
+    Stop();
+    Serial.println("⚠️ EMERGENCY STOP by button!");
+    return;
+  }
+
+  if (yCentered && xCentered)
+  {
+    Stop();
+  }
+  else if (!yCentered)
+  {
+    if (y < CENTER - DEADZONE)
+    {
+      int speed = map(y, CENTER - DEADZONE, 0, 0, 255);
+      GoBack(speed);
+    }
+    else if (y > CENTER + DEADZONE)
+    {
+      int speed = map(y, CENTER + DEADZONE, 4095, 0, 255);
+      GoForward(speed);
+    }
+  }
+  else if (!xCentered)
+  {
+    if (x < CENTER - DEADZONE)
+    {
+      int speed = map(x, CENTER - DEADZONE, 0, 0, 255);
+      GoLeft(speed);
+    }
+    else if (x > CENTER + DEADZONE)
+    {
+      int speed = map(x, CENTER + DEADZONE, 4095, 0, 255);
+      GoRight(speed);
+    }
+  }
+}
+
+void printTask(void *pvParameters)
+{
+  JoystickData localData;
+  while (1)
+  {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
-    if (newDataAvailable) 
+    if (newDataAvailable)
     {
+      lastcommandTime = millis();
       digitalWrite(ledPin, HIGH);
+
+      portDISABLE_INTERRUPTS();
+      localData = receivedData;
+      newDataAvailable = false;
+      portENABLE_INTERRUPTS();
+
       Serial.println("=================================");
       Serial.print("📦 Message ID: ");
-      Serial.println(receivedData.messageId);
+      Serial.println(localData.messageId);
       Serial.print("🕹️  X-Axis: ");
-      Serial.println(receivedData.xValue);
+      Serial.println(localData.xValue);
       Serial.print("🕹️  Y-Axis: ");
-      Serial.println(receivedData.yValue);
+      Serial.println(localData.yValue);
       Serial.print("🔘 Button: ");
-      Serial.println(receivedData.buttonState == LOW ? "PRESSED" : "released");
+      Serial.println(localData.buttonState == LOW ? "PRESSED" : "RELEASED");
 
-      // Add joystick position interpretation
-      if (receivedData.xValue < 1000) {
-        Serial.println("⬅️  Moving LEFT");
-      } else if (receivedData.xValue > 3000) {
-        Serial.println("➡️  Moving RIGHT");
-      }
+      controlFromJoystick(localData);
+      Serial.println("=================================\n");
 
-      if (receivedData.yValue < 1000) {
-        Serial.println("⬇️  Moving DOWN");
-      } else if (receivedData.yValue > 3000) {
-        Serial.println("⬆️  Moving UP");
-      }
-
-      // TODO: MOVE WHEELS 
-
-      Serial.println("=================================");
-      Serial.println();
-
-      newDataAvailable = false;
-      vTaskDelay(pdMS_TO_TICKS(25));  
+      vTaskDelay(pdMS_TO_TICKS(50));
     }
     digitalWrite(ledPin, LOW);
   }
 }
 
-void setup() {
+void setup()
+{
   Serial.begin(115200);
   delay(100);
 
   pinMode(ledPin, OUTPUT);
   digitalWrite(ledPin, LOW);
 
-  Serial.println("🔧 ESP32 Receiver Starting...");
+  pinMode(IN1, OUTPUT);
+  pinMode(IN2, OUTPUT);
+  pinMode(IN3, OUTPUT);
+  pinMode(IN4, OUTPUT);
 
-  // Create queue for thread-safe communication
+  // ИСПРАВЛЕНО ДЛЯ ESP32 CORE 3.X.X:
+  // Вместо ledcSetup и ledcAttachPin теперь используется одна функция ledcAttach!
+  ledcAttach(ENA, PWM_FREQ, PWM_RES);
+  ledcAttach(ENB, PWM_FREQ, PWM_RES);
+
+  Stop();
+
+  Serial.println("🔧 ESP32 Receiver Starting (v3.x.x compatible)...");
+  Serial.println("✅ PWM Speed Control INITIALIZED on pins 15 (ENA) and 2 (ENB)");
+  Serial.println("========================================================");
+
   dataQueue = xQueueCreate(10, sizeof(JoystickData));
 
-  // Set ESP32 as Wi-Fi Station
   WiFi.mode(WIFI_STA);
-  delay(500);  // Wait for WiFi radio to fully power up
-  // CRITICAL: Actually start WiFi (this powers on the radio)
-  WiFi.begin();  // Starts WiFi without connecting to any network
-  delay(500);    // Wait for WiFi radio to fully power up
+  WiFi.begin();
+  delay(500);
 
-
-  // Initialize ESP-NOW
-  if (esp_now_init() != ESP_OK) {
+  if (esp_now_init() != ESP_OK)
+  {
     Serial.println("❌ Error initializing ESP-NOW");
     return;
   }
 
-  // Register receive callback
   esp_now_register_recv_cb(OnDataRecv);
+  lastcommandTime = millis();
 
-  Serial.println("✅ ESP-NOW initialized");
-  Serial.print("📡 Receiver MAC: ");
-  Serial.println(WiFi.macAddress());
-  Serial.println("Waiting for data...");
-  Serial.println();
-
-  // Create FreeRTOS tasks
-  xTaskCreatePinnedToCore(
-    receiveTask,
-    "Receive Task",
-    4096,
-    NULL,
-    2,
-    &receiveTaskHandle,
-    0);
-
-  xTaskCreatePinnedToCore(
-    printTask,
-    "Print Task",
-    4096,
-    NULL,
-    1,
-    &printTaskHandle,
-    1);
-
-  Serial.println("✅ FreeRTOS tasks created");
+  xTaskCreatePinnedToCore(receiveTask, "Receive Task", 4096, NULL, 2, &receiveTaskHandle, 0);
+  xTaskCreatePinnedToCore(printTask, "Print Task", 4096, NULL, 1, &printTaskHandle, 1);
 }
 
-void loop() {
-  // Empty - FreeRTOS handles everything
-  vTaskDelay(pdMS_TO_TICKS(1000));
+void loop()
+{
+  vTaskDelay(pdMS_TO_TICKS(50));
+
+  if (millis() - lastcommandTime > TIMEOUT_MS)
+  {
+    Stop();
+  }
 }
